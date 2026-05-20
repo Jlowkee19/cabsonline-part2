@@ -5,7 +5,7 @@
 
 import { useState, useEffect } from 'react';
 
-const PHP_BASE = 'https://webdev.aut.ac.nz/~xvq7775/assign_part2';
+const PHP_BASE = 'https://corsproxy.io/?url=https://webdev.aut.ac.nz/~xvq7775/assign_part2';
 
 export default function BookingForm() {
   const [form, setForm] = useState({
