@@ -5,9 +5,12 @@
 
 const express = require('express');
 const cors    = require('cors');
+const multer  = require('multer');
 const mysql   = require('mysql2');
 
-const app = express();
+const app    = express();
+const upload = multer();
+
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -28,8 +31,13 @@ db.connect(err => {
   }
 });
 
+// ---- GET / (health check) ----
+app.get('/', (req, res) => {
+  res.json({ status: 'ok', message: 'CabsOnline backend is running!' });
+});
+
 // ---- POST /booking ----
-app.post('/booking', (req, res) => {
+app.post('/booking', upload.none(), (req, res) => {
   const { cname, phone, unumber, snumber, stname, sbname, dsbname, date, time } = req.body;
 
   if (!cname || !phone || !snumber || !stname || !date || !time) {
@@ -40,7 +48,7 @@ app.post('/booking', (req, res) => {
     (cname, phone, unumber, snumber, stname, sbname, dsbname, pdate, ptime, status)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'unassigned')`;
 
-  db.query(sql, [cname, phone, unumber, snumber, stname, sbname, dsbname, date, time], (err, result) => {
+  db.query(sql, [cname, phone, unumber || '', snumber, stname, sbname || '', dsbname || '', date, time], (err, result) => {
     if (err) return res.json({ status: 'error', message: err.message });
 
     const newId = result.insertId;
@@ -54,23 +62,22 @@ app.post('/booking', (req, res) => {
 });
 
 // ---- POST /admin/search ----
-app.post('/admin/search', (req, res) => {
-  const { bsearch } = req.body;
-  let sql;
+app.post('/admin/search', upload.none(), (req, res) => {
+  const bsearch = req.body.bsearch ? req.body.bsearch.trim() : '';
 
-  if (bsearch && bsearch.trim() !== '') {
-    sql = `SELECT brn, cname, phone, sbname, dsbname, pdate, ptime, status 
-           FROM bookings WHERE brn = ?`;
-    db.query(sql, [bsearch.trim()], (err, results) => {
+  if (bsearch !== '') {
+    const sql = `SELECT brn, cname, phone, sbname, dsbname, pdate, ptime, status 
+                 FROM bookings WHERE brn = ?`;
+    db.query(sql, [bsearch], (err, results) => {
       if (err) return res.json({ status: 'error', message: err.message });
       res.json({ status: 'success', records: results });
     });
   } else {
-    sql = `SELECT brn, cname, phone, sbname, dsbname, pdate, ptime, status 
-           FROM bookings
-           WHERE status = 'unassigned'
-           AND STR_TO_DATE(CONCAT(pdate, ' ', ptime), '%d/%m/%Y %H:%i')
-           BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 2 HOUR)`;
+    const sql = `SELECT brn, cname, phone, sbname, dsbname, pdate, ptime, status 
+                 FROM bookings
+                 WHERE status = 'unassigned'
+                 AND STR_TO_DATE(CONCAT(pdate, ' ', ptime), '%d/%m/%Y %H:%i')
+                 BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 2 HOUR)`;
     db.query(sql, (err, results) => {
       if (err) return res.json({ status: 'error', message: err.message });
       res.json({ status: 'success', records: results });
@@ -79,8 +86,8 @@ app.post('/admin/search', (req, res) => {
 });
 
 // ---- POST /admin/assign ----
-app.post('/admin/assign', (req, res) => {
-  const { brn } = req.body;
+app.post('/admin/assign', upload.none(), (req, res) => {
+  const brn = req.body.brn ? req.body.brn.trim() : '';
   if (!brn) return res.json({ status: 'error', message: 'BRN is required.' });
 
   db.query("UPDATE bookings SET status = 'assigned' WHERE brn = ?", [brn], (err) => {
