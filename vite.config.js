@@ -3,5 +3,5 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
-  base: '/cabsonline-part2/',
+  base: '/~xvq7775/part2/',
 })
