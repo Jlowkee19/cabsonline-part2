@@ -16,20 +16,25 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // ---- Database connection ----
-const db = mysql.createConnection({
-  host:     process.env.DB_HOST     || 'webdev.aut.ac.nz',
-  user:     process.env.DB_USER     || 'xvq7775',
-  password: process.env.DB_PASSWORD || 'wbxuqfzreaddtgentetybtjyruubfqlsa',
-  database: process.env.DB_NAME     || 'xvq7775'
-});
-
-db.connect(err => {
-  if (err) {
-    console.error('DB connection failed:', err);
-  } else {
-    console.log('Connected to MySQL!');
-  }
-});
+// ✅ New - connection pool that auto-reconnects
+const db = mysql.createPool({
+    host:            process.env.DB_HOST     || 'webdev.aut.ac.nz',
+    user:            process.env.DB_USER     || 'xvq7775',
+    password:        process.env.DB_PASSWORD || 'wbxuqfzreaddtgentetybtjyruubfqlsa',
+    database:        process.env.DB_NAME     || 'xvq7775',
+    waitForConnections: true,
+    connectionLimit:    10,
+    queueLimit:         0
+  });
+  
+  db.getConnection((err, connection) => {
+    if (err) {
+      console.error('DB connection failed:', err);
+    } else {
+      console.log('Connected to MySQL!');
+      connection.release();
+    }
+  });
 
 // ---- GET / (health check) ----
 app.get('/', (req, res) => {
