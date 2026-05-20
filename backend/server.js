@@ -1,12 +1,12 @@
 // server.js
 // Student: xvq7775
 // Description: Node.js/Express backend for CabsOnline
-// Handles booking and admin requests, connects to MySQL
+// Handles booking and admin requests, connects to PostgreSQL on Neon
 
 const express = require('express');
 const cors    = require('cors');
 const multer  = require('multer');
-const mysql   = require('mysql2');
+const { Pool } = require('pg');
 
 const app    = express();
 const upload = multer();
@@ -16,25 +16,10 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // ---- Database connection ----
-// ✅ New - connection pool that auto-reconnects
-const db = mysql.createPool({
-    host:            process.env.DB_HOST     || 'webdev.aut.ac.nz',
-    user:            process.env.DB_USER     || 'xvq7775',
-    password:        process.env.DB_PASSWORD || 'wbxuqfzreaddtgentetybtjyruubfqlsa',
-    database:        process.env.DB_NAME     || 'xvq7775',
-    waitForConnections: true,
-    connectionLimit:    10,
-    queueLimit:         0
-  });
-  
-  db.getConnection((err, connection) => {
-    if (err) {
-      console.error('DB connection failed:', err);
-    } else {
-      console.log('Connected to MySQL!');
-      connection.release();
-    }
-  });
+const db = new Pool({
+  connectionString: process.env.DATABASE_URL || 'postgresql://neondb_owner:npg_PrMpIYH9ks7O@ep-summer-tree-a71fvg0j.ap-southeast-2.aws.neon.tech/neondb?sslmode=require',
+  ssl: { rejectUnauthorized: false }
+});
 
 // ---- GET / (health check) ----
 app.get('/', (req, res) => {
@@ -42,63 +27,69 @@ app.get('/', (req, res) => {
 });
 
 // ---- POST /booking ----
-app.post('/booking', upload.none(), (req, res) => {
+app.post('/booking', upload.none(), async (req, res) => {
   const { cname, phone, unumber, snumber, stname, sbname, dsbname, date, time } = req.body;
 
   if (!cname || !phone || !snumber || !stname || !date || !time) {
     return res.json({ status: 'error', message: 'Required fields are missing.' });
   }
 
-  const sql = `INSERT INTO bookings 
-    (cname, phone, unumber, snumber, stname, sbname, dsbname, pdate, ptime, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'unassigned')`;
+  try {
+    const result = await db.query(
+      `INSERT INTO bookings (cname, phone, unumber, snumber, stname, sbname, dsbname, pdate, ptime, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'unassigned') RETURNING id`,
+      [cname, phone, unumber || '', snumber, stname, sbname || '', dsbname || '', date, time]
+    );
 
-  db.query(sql, [cname, phone, unumber || '', snumber, stname, sbname || '', dsbname || '', date, time], (err, result) => {
-    if (err) return res.json({ status: 'error', message: err.message });
-
-    const newId = result.insertId;
+    const newId = result.rows[0].id;
     const brn   = 'BRN' + String(newId).padStart(5, '0');
 
-    db.query('UPDATE bookings SET brn = ? WHERE id = ?', [brn, newId], (err2) => {
-      if (err2) return res.json({ status: 'error', message: err2.message });
-      res.json({ status: 'success', brn, pdate: date, ptime: time });
-    });
-  });
+    await db.query('UPDATE bookings SET brn = $1 WHERE id = $2', [brn, newId]);
+
+    res.json({ status: 'success', brn, pdate: date, ptime: time });
+  } catch (err) {
+    res.json({ status: 'error', message: err.message });
+  }
 });
 
 // ---- POST /admin/search ----
-app.post('/admin/search', upload.none(), (req, res) => {
+app.post('/admin/search', upload.none(), async (req, res) => {
   const bsearch = req.body.bsearch ? req.body.bsearch.trim() : '';
 
-  if (bsearch !== '') {
-    const sql = `SELECT brn, cname, phone, sbname, dsbname, pdate, ptime, status 
-                 FROM bookings WHERE brn = ?`;
-    db.query(sql, [bsearch], (err, results) => {
-      if (err) return res.json({ status: 'error', message: err.message });
-      res.json({ status: 'success', records: results });
-    });
-  } else {
-    const sql = `SELECT brn, cname, phone, sbname, dsbname, pdate, ptime, status 
-                 FROM bookings
-                 WHERE status = 'unassigned'
-                 AND STR_TO_DATE(CONCAT(pdate, ' ', ptime), '%d/%m/%Y %H:%i')
-                 BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 2 HOUR)`;
-    db.query(sql, (err, results) => {
-      if (err) return res.json({ status: 'error', message: err.message });
-      res.json({ status: 'success', records: results });
-    });
+  try {
+    let result;
+    if (bsearch !== '') {
+      result = await db.query(
+        `SELECT brn, cname, phone, sbname, dsbname, pdate, ptime, status 
+         FROM bookings WHERE brn = $1`,
+        [bsearch]
+      );
+    } else {
+      result = await db.query(
+        `SELECT brn, cname, phone, sbname, dsbname, pdate, ptime, status 
+         FROM bookings
+         WHERE status = 'unassigned'
+         AND TO_TIMESTAMP(pdate || ' ' || ptime, 'DD/MM/YYYY HH24:MI')
+         BETWEEN NOW() AND NOW() + INTERVAL '2 hours'`
+      );
+    }
+    res.json({ status: 'success', records: result.rows });
+  } catch (err) {
+    res.json({ status: 'error', message: err.message });
   }
 });
 
 // ---- POST /admin/assign ----
-app.post('/admin/assign', upload.none(), (req, res) => {
+app.post('/admin/assign', upload.none(), async (req, res) => {
   const brn = req.body.brn ? req.body.brn.trim() : '';
   if (!brn) return res.json({ status: 'error', message: 'BRN is required.' });
 
-  db.query("UPDATE bookings SET status = 'assigned' WHERE brn = ?", [brn], (err) => {
-    if (err) return res.json({ status: 'error', message: err.message });
+  try {
+    await db.query("UPDATE bookings SET status = 'assigned' WHERE brn = $1", [brn]);
     res.json({ status: 'success', message: `Booking ${brn} has been assigned!` });
-  });
+  } catch (err) {
+    res.json({ status: 'error', message: err.message });
+  }
 });
 
 const PORT = process.env.PORT || 3000;
